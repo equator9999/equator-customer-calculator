@@ -31,25 +31,22 @@ def _sign(customer_id: str, secret: str) -> str:
 
 
 def _first(v):
-    # Streamlit sometimes returns lists for query params
-    if isinstance(v, list) and v:
-        return v[0]
-    return v
+    if isinstance(v, list):
+        return v[0] if v else ""
+    return v or ""
 
 
 def _get_query_param(name: str) -> str:
     # New API
     try:
         qp = st.query_params
-        v = _first(qp.get(name))
-        return (v or "").strip()
+        return str(_first(qp.get(name))).strip()
     except Exception:
         pass
     # Old API fallback
     try:
         qp = st.experimental_get_query_params()
-        v = _first(qp.get(name))
-        return (v or "").strip()
+        return str(_first(qp.get(name))).strip()
     except Exception:
         return ""
 
@@ -61,14 +58,15 @@ def require_customer_access() -> str:
     secret = _get_secret("CUSTOMER_LINK_SECRET", "").strip()
     allow = _get_access_json()
 
-    # Optional debug (set DEBUG_ACCESS=1 in Render env to see what's arriving)
+    # DEBUG: set DEBUG_ACCESS=1 in Render env to see what the app received
     if os.environ.get("DEBUG_ACCESS", "") == "1":
         st.info(
             {
-                "c": customer_id,
-                "sig": sig,
+                "received_c": customer_id,
+                "received_sig_prefix": sig[:12],
                 "secret_len": len(secret),
                 "allow_keys": list(allow.keys()) if isinstance(allow, dict) else str(type(allow)),
+                "expected_sig_prefix": _sign(customer_id, secret)[:12] if (customer_id and secret) else "",
             }
         )
 
@@ -81,7 +79,6 @@ def require_customer_access() -> str:
         st.error("Invalid link. Please use the link provided by Equator.")
         st.stop()
 
-    # If allowlist is present, enforce it
     if isinstance(allow, dict) and len(allow) > 0:
         if not bool(allow.get(customer_id, False)):
             st.error("Invalid link. Please use the link provided by Equator.")
@@ -99,7 +96,6 @@ def log_event(customer_id: str, event: str, payload: dict | None = None) -> None
     if webhook:
         try:
             import requests
-
             requests.post(webhook, json=data, timeout=3)
             return
         except Exception:
