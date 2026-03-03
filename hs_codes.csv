@@ -1,0 +1,56 @@
+HSCode,Description,Category,RiskLevel
+49111090,"Printed advertising material (brochures, leaflets, flyers)",Marketing,LOW
+49119900,Printed matter (other marketing prints),Marketing,LOW
+49011000,Printed catalogs and product booklets,Marketing,LOW
+49019900,Printed books and manuals,Marketing,LOW
+49119100,Advertising posters and display prints,Marketing,LOW
+48201030,Notebooks and writing pads (promotional),Stationery,LOW
+48202000,Diaries and planners,Stationery,LOW
+48211010,Paper labels and stickers,Stationery,LOW
+48192000,Paper cartons and presentation boxes,Packaging,LOW
+48195000,Other paper packaging for marketing kits,Packaging,LOW
+39269097,Plastic promotional articles (general),Promotional Goods,LOW
+39261000,Plastic office or desk items,Promotional Goods,LOW
+39232100,Plastic bags and promotional pouches,Packaging,LOW
+39232990,Plastic packaging (other promotional),Packaging,LOW
+42022290,Promotional handbags and tote bags,Promotional Goods,MEDIUM
+42029291,Promotional backpacks and rucksacks,Promotional Goods,MEDIUM
+61091000,Cotton T-shirts and vests,Apparel,HIGH
+61099020,T-shirts of other textile materials,Apparel,HIGH
+61103010,Sweatshirts and hoodies,Apparel,HIGH
+61178080,Textile accessories (scarves etc),Apparel,HIGH
+62171000,Textile accessories (other),Apparel,HIGH
+63079098,"Promotional textile items (flags, banners)",Marketing,MEDIUM
+63071010,Microfiber cleaning cloths,Marketing,MEDIUM
+84713000,Laptops and notebook computers,Electronics,HIGH
+84715000,Computer processing units,Electronics,HIGH
+84716070,Computer keyboards,Electronics,MEDIUM
+84716060,Computer mice,Electronics,MEDIUM
+85235100,USB flash drives,Electronics,MEDIUM
+84717050,Hard disk drives,Electronics,HIGH
+85171200,Mobile phones and smartphones,Electronics,HIGH
+85176200,"Networking equipment (routers, switches)",Electronics,HIGH
+85183000,Headphones and earphones,Electronics,MEDIUM
+85044095,Power adapters and chargers,Electronics,MEDIUM
+85444290,Electrical cables and USB cables,Electronics,LOW
+82055980,Hand tools (general),Tools,LOW
+82054000,Screwdrivers,Tools,LOW
+82041100,Spanners and wrenches,Tools,LOW
+82032000,Pliers,Tools,LOW
+73269098,Metal promotional items (general),Metal Goods,LOW
+83081000,Key rings and key chains (metal),Promotional Goods,LOW
+73239300,Stainless steel drinkware,Promotional Goods,LOW
+96081010,Ballpoint pens,Stationery,LOW
+96082000,Felt-tip pens and markers,Stationery,LOW
+96084000,Propelling pencils,Stationery,LOW
+69120025,Ceramic mugs and tableware,Housewares,MEDIUM
+39241000,Plastic drinkware and cups,Housewares,LOW
+96170000,Thermos flasks and drink bottles,Housewares,LOW
+33049900,Cosmetics and skincare products,Personal Care,HIGH
+33030010,Perfumes and toilet waters,Personal Care,HIGH
+34011100,Soap for personal use,Personal Care,MEDIUM
+71171900,Imitation jewellery,Jewellery,HIGH
+71131100,Silver jewellery,Jewellery,HIGH
+71131900,Gold jewellery,Jewellery,HIGH
+90230080,Demonstration models (samples),Samples,LOW
+98100000,Commercial samples with no commercial value,Samples,LOW
