@@ -1,109 +1,122 @@
 import os
-import json
 import hmac
 import hashlib
-import time
-from pathlib import Path
+import json
+from datetime import datetime, timezone
 
 import streamlit as st
 
 
-def _get_secret(key: str, default: str = "") -> str:
-    v = os.environ.get(key)
-    if v is not None and str(v).strip() != "":
-        return str(v)
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _get_query_params() -> dict:
+    """
+    Robustly read query params across Streamlit versions.
+
+    Returns a plain dict: {key: [values...] } like the older API.
+    """
+    # Streamlit >= 1.30 has st.query_params (Mapping[str, str | list[str]])
     try:
-        return str(st.secrets.get(key, default))
+        qp = st.query_params  # type: ignore[attr-defined]
+        out = {}
+        for k, v in qp.items():
+            if isinstance(v, list):
+                out[k] = v
+            else:
+                out[k] = [v]
+        return out
     except Exception:
-        return default
+        pass
 
-
-def _get_access_json() -> dict:
-    raw = _get_secret("CUSTOMER_ACCESS_JSON", "{}")
+    # Older Streamlit
     try:
-        return json.loads(raw) if raw else {}
+        return st.experimental_get_query_params()
     except Exception:
         return {}
 
 
-def _sign(customer_id: str, secret: str) -> str:
-    return hmac.new(secret.encode("utf-8"), customer_id.encode("utf-8"), hashlib.sha256).hexdigest()
+def _hmac_sig(secret: str, customer_id: str) -> str:
+    """
+    Signature function used for signed links.
+
+    IMPORTANT:
+    - If your existing links were generated using a different scheme
+      (e.g., including a timestamp, or using sha256(secret+customer_id)),
+      you must match that exact scheme here.
+
+    This implements: sig = hex(hmac_sha256(secret, customer_id)).
+    """
+    msg = customer_id.encode("utf-8")
+    key = secret.encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
-def _first(v):
-    if isinstance(v, list):
-        return v[0] if v else ""
-    return v or ""
-
-
-def _get_query_param(name: str) -> str:
-    # New API
+def _constant_time_equal(a: str, b: str) -> bool:
     try:
-        qp = st.query_params
-        return str(_first(qp.get(name))).strip()
+        return hmac.compare_digest(a, b)
     except Exception:
-        pass
-    # Old API fallback
-    try:
-        qp = st.experimental_get_query_params()
-        return str(_first(qp.get(name))).strip()
-    except Exception:
-        return ""
+        return False
 
 
 def require_customer_access() -> str:
-    customer_id = _get_query_param("c")
-    sig = _get_query_param("sig")
+    """
+    Enforce signed-link access:
+      ?c=<customer_id>&sig=<signature>
 
-    secret = _get_secret("CUSTOMER_LINK_SECRET", "").strip()
-    allow = _get_access_json()
+    Stores verified customer_id in session_state so reruns never re-check.
+    """
+    if "customer_id" in st.session_state and st.session_state["customer_id"]:
+        return str(st.session_state["customer_id"])
 
-    # DEBUG: set DEBUG_ACCESS=1 in Render env to see what the app received
-    if os.environ.get("DEBUG_ACCESS", "") == "1":
-        st.info(
-            {
-                "received_c": customer_id,
-                "received_sig_prefix": sig[:12],
-                "secret_len": len(secret),
-                "allow_keys": list(allow.keys()) if isinstance(allow, dict) else str(type(allow)),
-                "expected_sig_prefix": _sign(customer_id, secret)[:12] if (customer_id and secret) else "",
-            }
-        )
-
-    if not secret or not customer_id or not sig:
-        st.error("Invalid link. Please use the link provided by Equator.")
+    secret = os.getenv("CUSTOMER_LINK_SECRET", "")
+    if not secret:
+        st.error("Server misconfigured: CUSTOMER_LINK_SECRET is not set.")
         st.stop()
 
-    expected = _sign(customer_id, secret)
-    if not hmac.compare_digest(expected, sig):
-        st.error("Invalid link. Please use the link provided by Equator.")
+    qp = _get_query_params()
+
+    c_vals = qp.get("c", []) or qp.get("customer_id", []) or qp.get("customer", [])
+    s_vals = qp.get("sig", []) or qp.get("signature", [])
+
+    customer_id = (c_vals[0] if c_vals else "").strip()
+    sig = (s_vals[0] if s_vals else "").strip()
+
+    if not customer_id or not sig:
+        # Debug: show what query params arrived (safe)
+        st.error("Invalid link: missing parameters.")
+        st.caption("Debug (what the app received):")
+        st.code(json.dumps(qp, indent=2))
         st.stop()
 
-    if isinstance(allow, dict) and len(allow) > 0:
-        if not bool(allow.get(customer_id, False)):
-            st.error("Invalid link. Please use the link provided by Equator.")
-            st.stop()
+    expected = _hmac_sig(secret, customer_id)
 
+    if not _constant_time_equal(sig, expected):
+        # Debug: show partial comparison safely (do NOT show secret)
+        st.error("Invalid link: signature mismatch.")
+        st.caption("Debug (what the app received):")
+        st.code(json.dumps({"c": customer_id, "sig_prefix": sig[:8], "expected_prefix": expected[:8]}, indent=2))
+        st.stop()
+
+    st.session_state["customer_id"] = customer_id
     return customer_id
 
 
-def log_event(customer_id: str, event: str, payload: dict | None = None) -> None:
-    payload = payload or {}
-    webhook = _get_secret("EVENT_LOG_WEBHOOK_URL", "").strip()
-
-    data = {"ts": int(time.time()), "customer_id": customer_id, "event": event, "payload": payload}
-
-    if webhook:
-        try:
-            import requests
-            requests.post(webhook, json=data, timeout=3)
-            return
-        except Exception:
-            pass
-
+def log_event(customer_id: str, event_name: str, meta: dict | None = None) -> None:
+    """
+    Lightweight logging. Replace with your real logger if needed.
+    Keeps failures non-fatal.
+    """
     try:
-        p = Path(__file__).parent / "events.log"
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(data) + "\n")
+        payload = {
+            "ts": _now_iso(),
+            "customer_id": customer_id,
+            "event": event_name,
+            "meta": meta or {},
+        }
+        # If you have a log sink, write it here.
+        # For now: print goes to Render logs.
+        print(json.dumps(payload))
     except Exception:
         pass
