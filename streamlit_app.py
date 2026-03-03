@@ -33,9 +33,6 @@ LOGO_FILE = APP_DIR / "logo.png"
 st.set_page_config(page_title="Equator Calculator", layout="wide")
 
 
-# ---------------------------
-# Caching helpers
-# ---------------------------
 @st.cache_data(show_spinner=False)
 def read_fuel_table_cached(rates_path_str: str) -> pd.DataFrame | None:
     rates_path = Path(rates_path_str)
@@ -81,14 +78,27 @@ def ensure_to_city_in_template_bytes(template_bytes: bytes) -> bytes:
     return out.getvalue()
 
 
+def safe_show_logo():
+    if not LOGO_FILE.exists():
+        return
+    try:
+        # Read bytes first so Streamlit/PIL validates; catch failures
+        b = LOGO_FILE.read_bytes()
+        st.image(b, use_container_width=True)
+    except Exception:
+        # Don’t crash the app if the image is bad
+        pass
+
+
 # ---------- Header ----------
 header_cols = st.columns([1.2, 6, 1])
 with header_cols[0]:
-    if LOGO_FILE.exists():
-        st.image(str(LOGO_FILE), use_container_width=True)
+    safe_show_logo()
 with header_cols[1]:
     st.markdown("## Pricing Calculator")
     st.caption("Customer calculator")
+
+st.divider()
 
 
 # ---------------------------
