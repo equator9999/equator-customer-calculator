@@ -1,74 +1,97 @@
+import os
+import json
 import hmac
 import hashlib
-import json
 import time
+from pathlib import Path
 
-import requests
 import streamlit as st
 
 
-def _safe_eq(a: str, b: str) -> bool:
+def _get_secret(key: str, default: str = "") -> str:
+    # Render/most hosts: env vars
+    v = os.environ.get(key)
+    if v is not None and str(v).strip() != "":
+        return str(v)
+
+    # Streamlit Cloud: st.secrets (only if present)
     try:
-        return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+        return str(st.secrets.get(key, default))
     except Exception:
-        return False
+        return default
 
 
-def make_sig(secret: str, customer_id: str) -> str:
-    mac = hmac.new(secret.encode("utf-8"), customer_id.encode("utf-8"), hashlib.sha256)
-    return mac.hexdigest()
+def _get_access_json() -> dict:
+    raw = _get_secret("CUSTOMER_ACCESS_JSON", "{}")
+    try:
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def _sign(customer_id: str, secret: str) -> str:
+    return hmac.new(
+        secret.encode("utf-8"),
+        customer_id.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def require_customer_access() -> str:
-    params = st.query_params
-    c = (params.get("c") or "").strip()
-    sig = (params.get("sig") or "").strip()
+    qp = st.query_params
+    customer_id = (qp.get("c") or "").strip()
+    sig = (qp.get("sig") or "").strip()
 
-    secret = st.secrets.get("CUSTOMER_LINK_SECRET", "")
-    if not secret:
-        st.error("Missing CUSTOMER_LINK_SECRET.")
-        st.stop()
+    secret = _get_secret("CUSTOMER_LINK_SECRET", "")
+    allow = _get_access_json()
 
-    if not c or not sig:
+    if not secret or not customer_id or not sig:
         st.error("Invalid link. Please use the link provided by Equator.")
         st.stop()
 
-    expected = make_sig(secret, c)
-    if not _safe_eq(sig, expected):
+    expected = _sign(customer_id, secret)
+    if not hmac.compare_digest(expected, sig):
         st.error("Invalid link. Please use the link provided by Equator.")
         st.stop()
 
-    # Optional allowlist/revoke map: {"acme": true, "globex": false}
-    access_json = st.secrets.get("CUSTOMER_ACCESS_JSON", "")
-    if access_json:
-        try:
-            m = json.loads(access_json)
-            if not bool(m.get(c, False)):
-                st.error("Access disabled. Please contact Equator.")
-                st.stop()
-        except Exception:
-            st.error("Invalid CUSTOMER_ACCESS_JSON in secrets.")
+    # Optional allowlist (if empty, allow any signed customer_id)
+    if isinstance(allow, dict) and len(allow) > 0:
+        if not allow.get(customer_id, False):
+            st.error("Invalid link. Please use the link provided by Equator.")
             st.stop()
 
-    return c
+    return customer_id
 
 
-def log_event(customer_id: str, event: str, meta: dict | None = None) -> None:
-    url = st.secrets.get("EVENT_LOG_WEBHOOK_URL", "")
-    if not url:
-        return
+def log_event(customer_id: str, event: str, payload: dict | None = None) -> None:
+    """
+    Minimal logging hook.
+    If EVENT_LOG_WEBHOOK_URL is set, POSTs JSON there.
+    Otherwise writes a local append-only log file (best-effort).
+    """
+    payload = payload or {}
+    webhook = _get_secret("EVENT_LOG_WEBHOOK_URL", "").strip()
 
-    payload = {
+    data = {
         "ts": int(time.time()),
         "customer_id": customer_id,
         "event": event,
-        "meta": meta or {},
-        "utm_source": st.query_params.get("utm_source", ""),
-        "utm_campaign": st.query_params.get("utm_campaign", ""),
-        "utm_medium": st.query_params.get("utm_medium", ""),
+        "payload": payload,
     }
 
+    if webhook:
+        try:
+            import requests
+
+            requests.post(webhook, json=data, timeout=3)
+            return
+        except Exception:
+            pass
+
+    # best-effort local file (Render filesystem is ephemeral, but fine for debug)
     try:
-        requests.post(url, json=payload, timeout=3)
+        p = Path(__file__).parent / "events.log"
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(data) + "\n")
     except Exception:
         pass
