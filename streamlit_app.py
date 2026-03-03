@@ -11,28 +11,11 @@ import run_pricing
 from customer_access import require_customer_access, log_event
 
 
-# ===============================
-# CUSTOMER ACCESS + TRACKING
-# ===============================
-customer_id = require_customer_access()
-log_event(customer_id, "page_view")
-# ===============================
-
-
+# ----------------------------
+# Page config FIRST
+# ----------------------------
 APP_DIR = Path(__file__).parent
-
-RATES_FILE = APP_DIR / "RETOOL ALL COST UPLOAD 2026 WITH FUEL TYPE.xlsx"
-TEMPLATE_FILE = APP_DIR / "Shipment Template.xlsx"
-
-TRANSIT_BASE = APP_DIR / "TRANSIT_BASE.xlsx"
-TRANSIT_OVERRIDES = APP_DIR / "TRANSIT_CITY_OVERRIDES.xlsx"
-CITYCLASS_MASTER = APP_DIR / "CITYCLASS_MASTER.xlsx"
-
 LOGO_FILE = APP_DIR / "logo.png"
-
-# Hidden operational defaults (not shown in customer UI)
-DEFAULT_DIVISOR = 5000
-DEFAULT_MAX_PARCELS = 10
 
 st.set_page_config(page_title="Equator Portal", layout="wide", page_icon="📦")
 
@@ -40,18 +23,15 @@ st.set_page_config(page_title="Equator Portal", layout="wide", page_icon="📦")
 st.markdown(
     """
 <style>
-/* Make it feel like a real product */
 .block-container { padding-top: 1.4rem; padding-bottom: 2.6rem; max-width: 1200px; }
 h1, h2, h3 { letter-spacing: -0.02em; }
 div[data-testid="stToolbar"] { visibility: hidden; height: 0px; }
 
-/* Inputs */
 div[data-baseweb="input"] input,
 div[data-baseweb="select"] > div {
   border-radius: 12px !important;
 }
 
-/* Cards */
 .eq-card {
   background: white;
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -97,12 +77,40 @@ div[data-baseweb="select"] > div {
   padding: 10px 12px;
 }
 
-/* Make dataframe area feel cleaner */
-div[data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; border: 1px solid rgba(15, 23, 42, 0.08); }
+div[data-testid="stDataFrame"] {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
+
+# ----------------------------
+# CUSTOMER ACCESS + TRACKING
+# Verify ONCE, then use session_state forever (prevents "invalid link" on reruns)
+# ----------------------------
+if "customer_id" not in st.session_state:
+    customer_id = require_customer_access()
+    st.session_state["customer_id"] = customer_id
+    log_event(customer_id, "page_view")
+else:
+    customer_id = st.session_state["customer_id"]
+
+
+# ----------------------------
+# Files / constants
+# ----------------------------
+RATES_FILE = APP_DIR / "RETOOL ALL COST UPLOAD 2026 WITH FUEL TYPE.xlsx"
+TEMPLATE_FILE = APP_DIR / "Shipment Template.xlsx"
+
+TRANSIT_BASE = APP_DIR / "TRANSIT_BASE.xlsx"
+TRANSIT_OVERRIDES = APP_DIR / "TRANSIT_CITY_OVERRIDES.xlsx"
+CITYCLASS_MASTER = APP_DIR / "CITYCLASS_MASTER.xlsx"
+
+DEFAULT_DIVISOR = 5000
+DEFAULT_MAX_PARCELS = 10
 
 
 # ---------------------------
@@ -143,30 +151,23 @@ def build_single_shipment_df(
     parcels_df: pd.DataFrame,
     max_parcels: int,
 ) -> pd.DataFrame:
-    """
-    Build a 1-row dataframe matching the Shipment Template headers.
-    Populates common fields + attempts Parcel 1..N using common naming patterns.
-    """
     row = {h: "" for h in template_headers}
 
     def set_if_present(key: str, value):
         if key in row:
             row[key] = value
 
-    # Core fields (adjust if your template uses different names)
     set_if_present("From Country", from_country)
     set_if_present("To Country", to_country)
     set_if_present("To City", to_city)
     set_if_present("Currency", currency)
     set_if_present("Incoterm", incoterm)
 
-    # Customs defaults (engine can ignore if not used)
     set_if_present("HS", hs_code)
     set_if_present("HS Code", hs_code)
     set_if_present("Item Value", declared_value)
     set_if_present("Declared Value", declared_value)
 
-    # Expand parcel lines by Qty into an actual list of parcels
     parcels_df = parcels_df.fillna(0)
     expanded = []
     for _, r in parcels_df.iterrows():
@@ -182,7 +183,6 @@ def build_single_shipment_df(
             )
     expanded = expanded[:max_parcels]
 
-    # Fill Parcel 1..N using common header naming patterns
     for i, p in enumerate(expanded, start=1):
         weight_keys = [f"Parcel {i} Weight", f"Parcel{i} Weight", f"Parcel {i} Weight (kg)", f"Parcel {i} WeightKg"]
         length_keys = [f"Parcel {i} Length", f"Parcel{i} Length", f"Parcel {i} L", f"Parcel {i} Length (cm)"]
@@ -250,19 +250,12 @@ def run_engine(df: pd.DataFrame, tmpdir: Path, carriers: list[str], types: list[
 def pick_best_row(results: pd.DataFrame) -> pd.Series | None:
     if not isinstance(results, pd.DataFrame) or results.empty:
         return None
-
-    # Prefer a numeric total column if present
     if "Total" in results.columns:
-        try:
-            tmp = results.copy()
-            tmp["_TotalNum"] = pd.to_numeric(tmp["Total"], errors="coerce")
-            tmp = tmp.dropna(subset=["_TotalNum"]).sort_values("_TotalNum", ascending=True)
-            if not tmp.empty:
-                return tmp.iloc[0]
-        except Exception:
-            pass
-
-    # Fallback: first row
+        tmp = results.copy()
+        tmp["_TotalNum"] = pd.to_numeric(tmp["Total"], errors="coerce")
+        tmp = tmp.dropna(subset=["_TotalNum"]).sort_values("_TotalNum", ascending=True)
+        if not tmp.empty:
+            return tmp.iloc[0]
     return results.iloc[0]
 
 
@@ -271,24 +264,20 @@ def format_results_for_display(results: pd.DataFrame) -> pd.DataFrame:
         return results
     df = results.copy()
 
-    # If Total exists, bring it forward
     cols = list(df.columns)
     front = []
     for c in ["Carrier", "Service", "Service Type", "Product", "Total", "TransitDays", "Transit Days"]:
         if c in cols:
             front.append(c)
-    front = [c for c in front if c in cols]
     rest = [c for c in cols if c not in front]
     df = df[front + rest]
 
-    # Sort by Total if possible
     if "Total" in df.columns:
         try:
             df["_TotalNum"] = pd.to_numeric(df["Total"], errors="coerce")
             df = df.sort_values(["_TotalNum"], ascending=True).drop(columns=["_TotalNum"])
         except Exception:
             pass
-
     return df
 
 
@@ -329,11 +318,8 @@ st.write("")
 # ---------------------------
 left, right = st.columns([1.05, 0.95], gap="large")
 
-# Defaults
 carriers_default = ["UPS", "DHL", "FEDEX"]
 types_default = ["EXPRESS", "ECONOMY"]
-currency_default = "GBP"
-incoterm_default = "DAP"
 
 with left:
     st.markdown('<div class="eq-card">', unsafe_allow_html=True)
@@ -341,7 +327,6 @@ with left:
 
     with st.form("single_shipment_form", border=False):
         c1, c2, c3 = st.columns([1, 1, 1])
-
         with c1:
             from_country = st.text_input("Origin country", value="GB", help="2-letter country code, e.g. GB, US, DE")
         with c2:
@@ -351,9 +336,9 @@ with left:
 
         c4, c5 = st.columns(2)
         with c4:
-            currency = st.selectbox("Currency", ["GBP", "EUR", "USD"], index=["GBP", "EUR", "USD"].index(currency_default))
+            currency = st.selectbox("Currency", ["GBP", "EUR", "USD"], index=0)
         with c5:
-            incoterm = st.selectbox("Incoterm", ["DAP", "DDP"], index=["DAP", "DDP"].index(incoterm_default))
+            incoterm = st.selectbox("Incoterm", ["DAP", "DDP"], index=0)
 
         st.divider()
         st.markdown('<div class="eq-title">Parcels</div>', unsafe_allow_html=True)
@@ -374,7 +359,6 @@ with left:
             },
         )
 
-        # Totals / volumetric preview
         expanded_pieces = int((parcels["Qty"].fillna(0)).sum())
         total_weight = float((parcels["Qty"] * parcels["WeightKg"]).fillna(0).sum())
         total_cm3 = float((parcels["Qty"] * parcels["Lcm"] * parcels["Wcm"] * parcels["Hcm"]).fillna(0).sum())
@@ -424,11 +408,9 @@ with right:
 
         if best is not None:
             st.markdown('<span class="eq-best">Best option</span>', unsafe_allow_html=True)
-
-            # KPI row (robust to missing columns)
-            carrier_val = best.get("Carrier", best.get("carrier", "—"))
-            service_val = best.get("Service", best.get("Service Type", best.get("service", "—")))
-            total_val = best.get("Total", best.get("total", "—"))
+            carrier_val = best.get("Carrier", "—")
+            service_val = best.get("Service", best.get("Service Type", "—"))
+            total_val = best.get("Total", "—")
             transit_val = best.get("TransitDays", best.get("Transit Days", best.get("Transit", "—")))
 
             k1, k2 = st.columns([1.2, 1.0])
@@ -443,11 +425,9 @@ with right:
             st.divider()
 
         show_details = st.toggle("Show full breakdown columns", value=False)
-
         if show_details:
             table_df = results_disp
         else:
-            # Keep only friendly columns if they exist
             keep = []
             for c in ["Carrier", "Service", "Service Type", "Total", "TransitDays", "Transit Days", "FuelPctSource", "Fuel %", "FuelPct"]:
                 if c in results_disp.columns:
@@ -475,10 +455,9 @@ with right:
 # ---------------------------
 # Run handler
 # ---------------------------
-if run_btn:
+if "run_btn" in locals() and run_btn:
     log_event(customer_id, "price_run")
 
-    # Validation (keep it customer-friendly)
     if not to_country.strip():
         st.error("Please enter a destination country (2-letter code, e.g. US).")
         st.stop()
@@ -488,12 +467,10 @@ if run_btn:
 
     expanded_pieces = int((parcels["Qty"].fillna(0)).sum())
     total_weight = float((parcels["Qty"] * parcels["WeightKg"]).fillna(0).sum())
-
     if expanded_pieces <= 0 or total_weight <= 0:
         st.error("Please enter valid parcel quantities and weights.")
         st.stop()
 
-    # Ensure optional vars exist even if expander wasn’t opened
     if "include_customs" not in locals():
         include_customs = False
     if "hs_code" not in locals():
@@ -501,9 +478,9 @@ if run_btn:
     if "declared_value" not in locals():
         declared_value = 0.0
     if "carriers_selected" not in locals():
-        carriers_selected = ["UPS", "DHL", "FEDEX"]
+        carriers_selected = carriers_default
     if "types_selected" not in locals():
-        types_selected = ["EXPRESS", "ECONOMY"]
+        types_selected = types_default
 
     shipment_df = build_single_shipment_df(
         template_headers,
