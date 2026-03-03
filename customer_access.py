@@ -9,12 +9,9 @@ import streamlit as st
 
 
 def _get_secret(key: str, default: str = "") -> str:
-    # Render/most hosts: env vars
     v = os.environ.get(key)
     if v is not None and str(v).strip() != "":
         return str(v)
-
-    # Streamlit Cloud: st.secrets (only if present)
     try:
         return str(st.secrets.get(key, default))
     except Exception:
@@ -54,7 +51,6 @@ def require_customer_access() -> str:
         st.error("Invalid link. Please use the link provided by Equator.")
         st.stop()
 
-    # Optional allowlist (if empty, allow any signed customer_id)
     if isinstance(allow, dict) and len(allow) > 0:
         if not allow.get(customer_id, False):
             st.error("Invalid link. Please use the link provided by Equator.")
@@ -64,11 +60,6 @@ def require_customer_access() -> str:
 
 
 def log_event(customer_id: str, event: str, payload: dict | None = None) -> None:
-    """
-    Minimal logging hook.
-    If EVENT_LOG_WEBHOOK_URL is set, POSTs JSON there.
-    Otherwise writes a local append-only log file (best-effort).
-    """
     payload = payload or {}
     webhook = _get_secret("EVENT_LOG_WEBHOOK_URL", "").strip()
 
@@ -88,7 +79,6 @@ def log_event(customer_id: str, event: str, payload: dict | None = None) -> None
         except Exception:
             pass
 
-    # best-effort local file (Render filesystem is ephemeral, but fine for debug)
     try:
         p = Path(__file__).parent / "events.log"
         with p.open("a", encoding="utf-8") as f:
