@@ -1,4 +1,3 @@
-import os
 import sys
 import json
 import tempfile
@@ -9,7 +8,7 @@ import io
 import streamlit as st
 import pandas as pd
 
-from customer_access import require_customer_access, log_event  # ✅ customer gate + tracking
+from customer_access import require_customer_access, log_event
 
 
 # --- Ensure required packages exist in THIS environment (Streamlit Cloud can be flaky) ---
@@ -44,7 +43,6 @@ TEMPLATE_FILE = APP_DIR / "Shipment Template.xlsx"
 TRANSIT_BASE = APP_DIR / "TRANSIT_BASE.xlsx"
 TRANSIT_OVERRIDES = APP_DIR / "TRANSIT_CITY_OVERRIDES.xlsx"
 CITYCLASS_MASTER = APP_DIR / "CITYCLASS_MASTER.xlsx"
-HS_DB = APP_DIR / "hs_codes.csv"
 
 LOGO_FILE = APP_DIR / "logo.png"
 
@@ -341,7 +339,6 @@ def run_engine_on_shipments(df: pd.DataFrame, tmpdir: Path):
 # Run button handler
 # ---------------------------
 if run_btn:
-    # ✅ track actual calculator usage
     log_event(customer_id, "price_run")
 
     with st.spinner("Running…"):
