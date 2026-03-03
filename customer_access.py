@@ -2,6 +2,7 @@ import os
 import hmac
 import hashlib
 import json
+import base64
 from datetime import datetime, timezone
 
 import streamlit as st
@@ -15,9 +16,9 @@ def _get_query_params() -> dict:
     """
     Robustly read query params across Streamlit versions.
 
-    Returns a plain dict: {key: [values...] } like the older API.
+    Returns a plain dict: {key: [values...]}
     """
-    # Streamlit >= 1.30 has st.query_params (Mapping[str, str | list[str]])
+    # New Streamlit API
     try:
         qp = st.query_params  # type: ignore[attr-defined]
         out = {}
@@ -30,27 +31,24 @@ def _get_query_params() -> dict:
     except Exception:
         pass
 
-    # Older Streamlit
+    # Older Streamlit API
     try:
         return st.experimental_get_query_params()
     except Exception:
         return {}
 
 
-def _hmac_sig(secret: str, customer_id: str) -> str:
-    """
-    Signature function used for signed links.
+def _sha256_hex(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
-    IMPORTANT:
-    - If your existing links were generated using a different scheme
-      (e.g., including a timestamp, or using sha256(secret+customer_id)),
-      you must match that exact scheme here.
 
-    This implements: sig = hex(hmac_sha256(secret, customer_id)).
-    """
-    msg = customer_id.encode("utf-8")
-    key = secret.encode("utf-8")
-    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+def _hmac_sha256_hex(secret: str, msg: str) -> str:
+    return hmac.new(secret.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _hmac_sha256_b64url(secret: str, msg: str) -> str:
+    raw = hmac.new(secret.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
 
 
 def _constant_time_equal(a: str, b: str) -> bool:
@@ -60,6 +58,48 @@ def _constant_time_equal(a: str, b: str) -> bool:
         return False
 
 
+def _candidate_sigs(secret: str, customer_id: str) -> list[str]:
+    """
+    Backwards-compatible signature candidates.
+
+    We don't know which scheme your old link generator used, so we accept
+    a small whitelist of common schemes.
+    """
+    c = customer_id
+
+    candidates = []
+
+    # HMAC variants (hex)
+    candidates.append(_hmac_sha256_hex(secret, c))
+    candidates.append(_hmac_sha256_hex(secret, f"c={c}"))
+    candidates.append(_hmac_sha256_hex(secret, f"{c}:{secret}"))  # uncommon but seen
+
+    # HMAC variants (base64url)
+    candidates.append(_hmac_sha256_b64url(secret, c))
+    candidates.append(_hmac_sha256_b64url(secret, f"c={c}"))
+
+    # Plain SHA256 variants (hex)
+    candidates.append(_sha256_hex(secret + c))
+    candidates.append(_sha256_hex(c + secret))
+    candidates.append(_sha256_hex(f"{c}:{secret}"))
+    candidates.append(_sha256_hex(f"{secret}:{c}"))
+
+    # Normalise: some generators output uppercase hex
+    out = []
+    for s in candidates:
+        out.append(s)
+        out.append(s.lower())
+        out.append(s.upper())
+    # Deduplicate while preserving order
+    seen = set()
+    uniq = []
+    for s in out:
+        if s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    return uniq
+
+
 def require_customer_access() -> str:
     """
     Enforce signed-link access:
@@ -67,7 +107,7 @@ def require_customer_access() -> str:
 
     Stores verified customer_id in session_state so reruns never re-check.
     """
-    if "customer_id" in st.session_state and st.session_state["customer_id"]:
+    if st.session_state.get("customer_id"):
         return str(st.session_state["customer_id"])
 
     secret = os.getenv("CUSTOMER_LINK_SECRET", "")
@@ -84,19 +124,28 @@ def require_customer_access() -> str:
     sig = (s_vals[0] if s_vals else "").strip()
 
     if not customer_id or not sig:
-        # Debug: show what query params arrived (safe)
         st.error("Invalid link: missing parameters.")
         st.caption("Debug (what the app received):")
         st.code(json.dumps(qp, indent=2))
         st.stop()
 
-    expected = _hmac_sig(secret, customer_id)
+    # Validate against known candidate schemes
+    candidates = _candidate_sigs(secret, customer_id)
 
-    if not _constant_time_equal(sig, expected):
-        # Debug: show partial comparison safely (do NOT show secret)
+    if not any(_constant_time_equal(sig, exp) for exp in candidates):
+        # Show safe debug prefixes to help identify which scheme is in use
         st.error("Invalid link: signature mismatch.")
         st.caption("Debug (what the app received):")
-        st.code(json.dumps({"c": customer_id, "sig_prefix": sig[:8], "expected_prefix": expected[:8]}, indent=2))
+        st.code(
+            json.dumps(
+                {
+                    "c": customer_id,
+                    "sig_prefix": sig[:8],
+                    "expected_prefixes": [c[:8] for c in candidates[:6]],
+                },
+                indent=2,
+            )
+        )
         st.stop()
 
     st.session_state["customer_id"] = customer_id
@@ -105,8 +154,7 @@ def require_customer_access() -> str:
 
 def log_event(customer_id: str, event_name: str, meta: dict | None = None) -> None:
     """
-    Lightweight logging. Replace with your real logger if needed.
-    Keeps failures non-fatal.
+    Lightweight logging to stdout (Render logs).
     """
     try:
         payload = {
@@ -115,8 +163,6 @@ def log_event(customer_id: str, event_name: str, meta: dict | None = None) -> No
             "event": event_name,
             "meta": meta or {},
         }
-        # If you have a log sink, write it here.
-        # For now: print goes to Render logs.
         print(json.dumps(payload))
     except Exception:
         pass
